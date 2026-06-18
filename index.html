@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>IGRIS — The King’s AI System</title>
+    <meta name="description" content="Born from ambition and forged through countless lines of code, Igris stands as a powerful AI system built to assist, automate, and innovate. Combining intelligence, speed, and reliability, Igris empowers users to push beyond limits and bring their ideas to life." />
+    <meta name="author" content="King" />
+
+    <!-- Theme -->
+    <meta name="theme-color" content="#09090b" />
+    <meta name="background-color" content="#09090b" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="IGRIS — The King’s AI System" />
+    <meta
+      property="og:description"
+      content="AI built to assist, automate, and innovate."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/igris_icon.png" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/igris_icon.png" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- App icons -->
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="512x512"
+      href="/igris_icon.png"
+    />
+
+    <link
+      rel="apple-touch-icon"
+      sizes="512x512"
+      href="/igris_icon.png"
+    />
+
+    <!-- iOS -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="IGRIS AI" />
+
+    <!-- Prevent browser color issues -->
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        min-height: 100%;
+        background: #09090b;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <script
+      type="module"
+      src="/src/main.tsx"
+    ></script>
+  </body>
+</html>
