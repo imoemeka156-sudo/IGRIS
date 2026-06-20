@@ -6,6 +6,7 @@ import {
   Upload, Paperclip, Loader2, FileCode, FileText, File, Image, AlertTriangle
 } from "lucide-react";
 import { motion } from "motion/react";
+import { analyzeFile } from "../lib/api";
 import { Message, AppConfig, UploadedFile } from "../types";
 import CodeSnippet, { parseMarkdownBlocks } from "./CodeSnippet";
 import { useAttachments } from "../hooks/useAttachments";
@@ -29,6 +30,7 @@ interface ChatInterfaceProps {
   onRenameSession?: (id: number, title: string) => void;
   onDeleteSession?: (id: number) => void;
   onShowToast?: (type: "success" | "error" | "info", text: string) => void;
+  onCancelResponse?: () => void;
 }
 
 export default function ChatInterface({
@@ -76,6 +78,10 @@ export default function ChatInterface({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Lightbox state for image preview modal
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxName, setLightboxName] = useState<string | null>(null);
+
   const getFileType = (name: string): UploadedFile["fileType"] | null => {
     const ext = name.split(".").pop()?.toLowerCase() || "";
     if (["png", "jpg", "jpeg", "webp"].includes(ext)) return "image";
@@ -112,8 +118,7 @@ export default function ChatInterface({
     const newAttachment: UploadedFile = {
       fileName: file.name,
       fileType,
-      rawContent: "",
-      analysis: null,
+      analysis: undefined,
       isStaged: true,
       previewUrl,
       fileObject: file,
@@ -137,6 +142,25 @@ export default function ChatInterface({
       fileInputRef.current.value = "";
     }
   };
+
+  // Lightbox handlers
+  const openLightbox = (url: string | undefined, name?: string) => {
+    if (!url) return;
+    setLightboxUrl(url);
+    setLightboxName(name || null);
+  };
+  const closeLightbox = () => {
+    setLightboxUrl(null);
+    setLightboxName(null);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeLightbox();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -333,77 +357,26 @@ export default function ChatInterface({
     messagesEndRef.current?.scrollIntoView({ behavior: isMobile ? "auto" : "smooth" });
   }, [messages, isSending]);
 
-  const readFileAsBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(",")[1] || result;
-        resolve(base64);
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const prepareAttachmentPayload = async (attachment: UploadedFile): Promise<UploadedFile> => {
-    if (!attachment.fileObject) return attachment;
-
-    const file = attachment.fileObject;
-    let rawContent = "";
-
-    if (attachment.fileType === "image" || attachment.fileType === "pdf" || attachment.fileType === "docx") {
-      rawContent = await readFileAsBase64(file);
-    } else {
-      rawContent = await file.text();
-    }
-
-    return {
-      ...attachment,
-      rawContent,
-      analysis: null,
-    };
-  };
-
   const analyzeAttachment = async (attachment: UploadedFile): Promise<UploadedFile> => {
     if (!attachment.fileObject) return attachment;
 
-    const body: Record<string, any> = {
-      fileName: attachment.fileName,
-      fileType: attachment.fileType,
-      mimeType: attachment.fileObject.type || undefined,
-    };
-
-    if (attachment.fileType === "image" || attachment.fileType === "pdf" || attachment.fileType === "docx") {
-      body.base64Data = attachment.rawContent;
-    } else {
-      body.textContent = attachment.rawContent;
-    }
-
     try {
-      const response = await fetch("/api/gemini/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || "Analysis endpoint failed.");
+      const analysis = await analyzeFile(attachment.fileObject);
+      // Sanitize analysis so it is JSON-serializable and cannot contain circular refs
+      let safeAnalysis: any = null;
+      try {
+        safeAnalysis = JSON.parse(JSON.stringify(analysis.analysis || analysis));
+      } catch (e) {
+        safeAnalysis = { summary: (analysis && (analysis.summary || analysis.description)) || null };
       }
 
-      const resData = await response.json();
       return {
         ...attachment,
-        analysis: resData.analysis || null,
-        rawContent: resData.rawContent || attachment.rawContent,
+        analysis: safeAnalysis,
       };
     } catch (error) {
       console.warn("Attachment analysis failed:", error);
-      return {
-        ...attachment,
-        analysis: null,
-      };
+      return { ...attachment, analysis: undefined };
     }
   };
 
@@ -419,9 +392,8 @@ export default function ChatInterface({
     if (activeAttachments.length > 0) {
       setIsFileAnalyzing(true);
       setAttachmentStatus("Uploading files...");
-      const prepared = await Promise.all(activeAttachments.map(prepareAttachmentPayload));
       setAttachmentStatus("Analyzing attachments...");
-      readyAttachments = await Promise.all(prepared.map(analyzeAttachment));
+      readyAttachments = await Promise.all(activeAttachments.map(analyzeAttachment));
     }
 
     try {
@@ -769,21 +741,29 @@ export default function ChatInterface({
                           {msg.files && msg.files.length > 0 ? (
                             <div className="mt-3 w-full flex flex-wrap gap-3">
                               {msg.files.map((file, idx) => (
-                                <FilePreview
-                                  key={idx}
-                                  fileName={file.fileName}
-                                  fileType={file.fileType as any}
-                                  fileData={file.rawContent}
-                                  pageCount={file.pageCount}
-                                />
+                                file.fileType === "image" && file.previewUrl ? (
+                                  <button
+                                    key={idx}
+                                    onClick={() => openLightbox(file.previewUrl, file.fileName)}
+                                    className="p-0 m-0 border-0 bg-transparent cursor-pointer rounded-lg"
+                                  >
+                                    <FilePreview
+                                      fileName={file.fileName}
+                                      fileType={file.fileType as any}
+                                      previewUrl={file.previewUrl}
+                                      pageCount={file.pageCount}
+                                    />
+                                  </button>
+                                ) : (
+                                  <FilePreview
+                                    key={idx}
+                                    fileName={file.fileName}
+                                    fileType={file.fileType as any}
+                                    pageCount={file.pageCount}
+                                  />
+                                )
                               ))}
                             </div>
-                          ) : msg.fileType ? (
-                            <FilePreview
-                              fileName={msg.fileName || "file"}
-                              fileType={msg.fileType}
-                              fileData={msg.fileData}
-                            />
                           ) : null}
                           
                           {/* Absolute corner dynamic copy icon (appears on hover on desktop, or instantly on tap on mobile, and fades out later) */}
@@ -875,6 +855,31 @@ export default function ChatInterface({
                 </div>
               );
             })}
+          </div>
+        )}
+        {lightboxUrl && (
+          <div
+            className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
+            onClick={closeLightbox}
+          >
+            <div className="relative max-w-[90vw] max-h-[90vh]">
+              <img
+                src={lightboxUrl}
+                alt={lightboxName || "preview"}
+                onClick={(e) => e.stopPropagation()}
+                className="max-w-full max-h-full rounded-lg shadow-2xl"
+              />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeLightbox();
+                }}
+                className="absolute top-2 right-2 rounded-full bg-zinc-900/60 p-2 text-white border border-white/10"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -981,16 +986,7 @@ export default function ChatInterface({
           activeSessionId={activeSessionId}
           theme={theme}
           hasAttachments={activeAttachments.length > 0}
-        />
-
-
-      </div>
-
-      {renameModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md px-4 py-6 font-mono text-white">
-          <div className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-2xl space-y-4 animate-scale-up">
-            <div className="flex items-center space-x-2">
-              <div className="rounded-lg p-2 bg-sky-500/10 text-sky-400">
+            onCancelResponse={onCancelResponse}
                 <Edit2 size={16} />
               </div>
               <div>

@@ -10,6 +10,7 @@ export interface Message {
   content: string;
   timestamp: string;
   isStreaming?: boolean;
+  files?: FileAttachment[];
 }
 
 export interface User {
@@ -17,6 +18,26 @@ export interface User {
   email: string;
   token?: string;
   rememberMe?: boolean;
+}
+
+export interface FileAttachment {
+  fileName: string;
+  fileType: "image" | "code" | "pdf" | "docx" | "txt";
+  analysis?: any;
+  pageCount?: number;
+  previewUrl?: string;
+}
+
+export interface UploadedFile {
+  fileName: string;
+  fileType: "image" | "code" | "pdf" | "docx" | "txt";
+  fileObject?: File | null;
+  previewUrl?: string;
+  analysis?: any;
+  isStaged?: boolean;
+  pageCount?: number;
+  fileSize: number;
+  lastModified: number;
 }
 
 export interface AppConfig {

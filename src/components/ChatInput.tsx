@@ -80,12 +80,8 @@ export default function ChatInput({
           name="message"
           type="text"
           value={inputText}
-          autocomplete="off"
-         autocorrect="off"
-         autocapitalize="off"
-         data-form-type="combat-input"
-         data-lpignore="true"
-         spellcheck={false}
+          data-form-type="combat-input"
+          data-lpignore="true"
           onChange={(e) => onChangeInput(e.target.value)}
           disabled={isSending || !activeSessionId}
           placeholder={

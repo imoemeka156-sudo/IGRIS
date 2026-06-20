@@ -1,88 +1,11 @@
 import { ChatSession, Message, User, UploadedFile } from "../types";
 
-const DEFAULT_URL = "/api/proxy";
-
-export function getStoredApiUrl(): string {
-  localStorage.setItem("igris_api_url", DEFAULT_URL);
-  return DEFAULT_URL;
-}
-
-export function setStoredApiUrl(url: string) {
-  localStorage.setItem("igris_api_url", url);
-  updateDiagnostics({ currentUrl: url });
-}
-
-export function getStoredToken(): string | null {
-  return (
-    localStorage.getItem("access_token") ||
-    localStorage.getItem("igris_token") ||
-    sessionStorage.getItem("access_token") ||
-    sessionStorage.getItem("igris_token")
-  );
-}
-
-export function setStoredToken(token: string, rememberMe: boolean = true) {
-  if (rememberMe) {
-    localStorage.setItem("access_token", token);
-    localStorage.setItem("igris_token", token);
-    sessionStorage.removeItem("access_token");
-    sessionStorage.removeItem("igris_token");
-  } else {
-    sessionStorage.setItem("access_token", token);
-    sessionStorage.setItem("igris_token", token);
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("igris_token");
-  }
-  updateDiagnostics({ tokenPresent: true });
-}
-
-export function clearStoredToken() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("igris_token");
-  sessionStorage.removeItem("access_token");
-  sessionStorage.removeItem("igris_token");
-  updateDiagnostics({ tokenPresent: false });
-}
-
-export function getStoredUser(): User | null {
-  const userStr = localStorage.getItem("igris_user") || sessionStorage.getItem("igris_user");
-  const token = getStoredToken();
-  if (!token) return null;
-
-  if (userStr) {
-    try {
-      const parsed = JSON.parse(userStr);
-      if (parsed) {
-        parsed.token = token;
-        return parsed;
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  return {
-    username: "MONARCH",
-    email: "user@example.com",
-    token: token
-  };
-}
-
-export function setStoredUser(user: User, rememberMe: boolean = true) {
-  if (rememberMe) {
-    localStorage.setItem("igris_user", JSON.stringify(user));
-    sessionStorage.removeItem("igris_user");
-    if (user.token) {
-      setStoredToken(user.token, true);
-    }
-  } else {
-    sessionStorage.setItem("igris_user", JSON.stringify(user));
-    localStorage.removeItem("igris_user");
-    if (user.token) {
-      setStoredToken(user.token, false);
-    }
-  }
-}
+export const MAIN_API_BASE = "https://igris-api-production.up.railway.app";
+const MAIN_API_URL = MAIN_API_BASE.replace(/\/$/, "");
+const FILE_API_BASE = "https://igris-file-intelligence-api.onrender.com";
+const API_URL_KEY = "igris_api_url";
+const TOKEN_KEYS = ["access_token", "igris_token"];
+const SESSIONS_KEY = "igris_sessions_v1";
 
 interface DiagState {
   currentUrl: string;
@@ -92,101 +15,135 @@ interface DiagState {
 }
 
 export let apiDiagnostics: DiagState = {
-  currentUrl: getStoredApiUrl(),
-  tokenPresent: !!getStoredToken(),
+  currentUrl: MAIN_API_BASE,
+  tokenPresent: false,
   lastRequest: "None",
   lastResponse: "None",
 };
 
-type DiagListener = (diag: DiagState) => void;
-const listeners = new Set<DiagListener>();
+type DiagListener = (d: DiagState) => void;
+const diagListeners = new Set<DiagListener>();
 
 export function subscribeToDiagnostics(listener: DiagListener) {
-  listeners.add(listener);
+  diagListeners.add(listener);
   listener({ ...apiDiagnostics });
-  return () => {
-    listeners.delete(listener);
-  };
+  return () => diagListeners.delete(listener);
 }
 
-export function updateDiagnostics(updates: Partial<DiagState>) {
+function updateDiagnostics(updates: Partial<DiagState>) {
   apiDiagnostics = { ...apiDiagnostics, ...updates };
-  listeners.forEach((listener) => listener({ ...apiDiagnostics }));
+  diagListeners.forEach((l) => l({ ...apiDiagnostics }));
 }
 
-// Low-level request wrapper for tracing & logging
-async function loggedFetch(url: string, options: RequestInit): Promise<Response> {
-  const method = options.method || "GET";
-  const body = options.body ? String(options.body) : "None";
-  const token = getStoredToken();
-  
-  const headersObj = options.headers ? { ...(options.headers as Record<string, string>) } : {};
-  const maskedUrl = url.replace(/(https?:\/\/)[^\/]+/, "$1••••••••");
-  const requestLog = `[${method}] ${maskedUrl}\nHeaders: ${JSON.stringify(headersObj, null, 2)}\nBody: ${body}`;
-  
-  console.log(`>>> API REQUEST:\nURL: ${url}\nMethod: ${method}\nHeaders: ${JSON.stringify(headersObj)}\nBody: ${body}`);
-  
-  updateDiagnostics({
-    lastRequest: requestLog,
-    currentUrl: getStoredApiUrl().replace(/(https?:\/\/)[^\/]+/, "$1••••••••"),
-    tokenPresent: !!token,
-  });
-
+function loadSessions(): ChatSession[] {
   try {
-    const res = await fetch(url, options);
-    const resClone = res.clone();
-    let responseBody = "";
-    try {
-      responseBody = await resClone.text();
-    } catch {
-      responseBody = "[Unparseable response stream]";
-    }
-
-    const responseLog = `Status: ${res.status} ${res.statusText}\nBody: ${responseBody}`;
-    console.log(`<<< API RESPONSE:\nURL: ${url}\nStatus: ${res.status}\nBody: ${responseBody}`);
-
-    updateDiagnostics({
-      lastResponse: responseLog,
-    });
-
-    return res;
-  } catch (err: any) {
-    const originalMessage = err.message || String(err);
-    let enhancedMessage = originalMessage;
-    
-    if (err instanceof TypeError && originalMessage === "Failed to fetch") {
-      enhancedMessage = `Connection block to "${url}" detected. Possible causes: CORS blockage, offline backend (asleep on Render free tier), or invalid secure HTTPS protocol routing.`;
-    }
-
-    const responseLog = `Network Error:\n${enhancedMessage}`;
-    console.error(`<<< API ERROR:\nURL: ${url}\nReason: ${enhancedMessage}`);
-
-    updateDiagnostics({
-      lastResponse: responseLog,
-    });
-
-    throw new Error(enhancedMessage);
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as ChatSession[];
+  } catch {
+    return [];
   }
+}
+
+function saveSessions(sessions: ChatSession[]) {
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+export function getStoredApiUrl(): string {
+  const v = localStorage.getItem(API_URL_KEY);
+  if (v === MAIN_API_BASE) return v;
+  localStorage.setItem(API_URL_KEY, MAIN_API_BASE);
+  return MAIN_API_BASE;
+}
+
+export function setStoredApiUrl(_url: string) {
+  localStorage.setItem(API_URL_KEY, MAIN_API_BASE);
+  updateDiagnostics({ currentUrl: MAIN_API_BASE });
+}
+
+export function getStoredToken(): string | null {
+  for (const k of TOKEN_KEYS) {
+    const v = localStorage.getItem(k) || sessionStorage.getItem(k);
+    if (v) return v;
+  }
+  return null;
+}
+
+export function setStoredToken(token: string, rememberMe: boolean = true) {
+  if (rememberMe) {
+    localStorage.setItem(TOKEN_KEYS[0], token);
+    localStorage.setItem(TOKEN_KEYS[1], token);
+    sessionStorage.removeItem(TOKEN_KEYS[0]);
+    sessionStorage.removeItem(TOKEN_KEYS[1]);
+  } else {
+    sessionStorage.setItem(TOKEN_KEYS[0], token);
+    sessionStorage.setItem(TOKEN_KEYS[1], token);
+    localStorage.removeItem(TOKEN_KEYS[0]);
+    localStorage.removeItem(TOKEN_KEYS[1]);
+  }
+  updateDiagnostics({ tokenPresent: !!token });
+}
+
+export function clearStoredToken() {
+  TOKEN_KEYS.forEach((k) => {
+    localStorage.removeItem(k);
+    sessionStorage.removeItem(k);
+  });
+  updateDiagnostics({ tokenPresent: false });
+}
+
+export function getStoredUser(): User | null {
+  const userStr = localStorage.getItem("igris_user") || sessionStorage.getItem("igris_user");
+  const token = getStoredToken();
+  if (!token) return null;
+  if (userStr) {
+    try {
+      const parsed = JSON.parse(userStr);
+      if (parsed) {
+        parsed.token = token;
+        return parsed;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return { username: "MONARCH", email: "user@example.com", token };
+}
+
+export function setStoredUser(user: User, rememberMe: boolean = true) {
+  if (rememberMe) {
+    localStorage.setItem("igris_user", JSON.stringify(user));
+    sessionStorage.removeItem("igris_user");
+    if (user.token) setStoredToken(user.token, true);
+  } else {
+    sessionStorage.setItem("igris_user", JSON.stringify(user));
+    localStorage.removeItem("igris_user");
+    if (user.token) setStoredToken(user.token, false);
+  }
+}
+
+function buildAuthHeaders(token?: string) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 export async function checkServerStatus(baseUrl: string): Promise<boolean> {
   try {
-    // Test using the official sessions API endpoint
-    const res = await fetch(`${baseUrl}/sessions`, {
-      method: "GET",
-      headers: { "accept": "application/json" },
-    });
-    // Any status code indicates the server is awake and accepting connections
-    return res.status !== 0;
-  } catch (err) {
+    const url = baseUrl || MAIN_API_BASE;
+    const res = await fetch(`${url.replace(/\/$/, "")}/`);
+    return res.ok;
+  } catch {
     return false;
   }
 }
 
-export async function registerUser(baseUrl: string, payload: any): Promise<boolean> {
-  const res = await loggedFetch(`${baseUrl}/auth/register`, {
+export async function registerUser(_baseUrl: string, payload: any): Promise<boolean> {
+  const res = await fetch(`${MAIN_API_URL}/auth/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildAuthHeaders(),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -206,10 +163,10 @@ export async function registerUser(baseUrl: string, payload: any): Promise<boole
   return true;
 }
 
-export async function loginUser(baseUrl: string, payload: any): Promise<{ access_token: string }> {
-  const res = await loggedFetch(`${baseUrl}/auth/login`, {
+export async function loginUser(_baseUrl: string, payload: any): Promise<{ access_token: string }> {
+  const res = await fetch(`${MAIN_API_URL}/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildAuthHeaders(),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -229,13 +186,10 @@ export async function loginUser(baseUrl: string, payload: any): Promise<{ access
   return res.json();
 }
 
-export async function fetchSessions(baseUrl: string, token: string): Promise<ChatSession[]> {
-  const res = await loggedFetch(`${baseUrl}/sessions`, {
+export async function fetchSessions(_baseUrl: string, token: string): Promise<ChatSession[]> {
+  const res = await fetch(`${MAIN_API_URL}/sessions`, {
     method: "GET",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "accept": "application/json",
-    },
+    headers: buildAuthHeaders(token),
   });
   if (res.status === 401) throw new Error("UNAUTHORIZED");
   if (!res.ok) {
@@ -245,14 +199,10 @@ export async function fetchSessions(baseUrl: string, token: string): Promise<Cha
   return res.json();
 }
 
-export async function createSessionOnServer(baseUrl: string, token: string): Promise<ChatSession> {
-  const res = await loggedFetch(`${baseUrl}/sessions`, {
+export async function createSessionOnServer(_baseUrl: string, token: string): Promise<ChatSession> {
+  const res = await fetch(`${MAIN_API_URL}/sessions`, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    // Backend requires a body object (e.g. { "title": "New Chat" })
+    headers: buildAuthHeaders(token),
     body: JSON.stringify({ title: "New Chat" }),
   });
   if (res.status === 401) throw new Error("UNAUTHORIZED");
@@ -263,13 +213,10 @@ export async function createSessionOnServer(baseUrl: string, token: string): Pro
   return res.json();
 }
 
-export async function renameSessionOnServer(baseUrl: string, token: string, sessionId: number, title: string): Promise<ChatSession> {
-  const res = await loggedFetch(`${baseUrl}/sessions/${sessionId}`, {
+export async function renameSessionOnServer(_baseUrl: string, token: string, sessionId: number, title: string): Promise<ChatSession> {
+  const res = await fetch(`${MAIN_API_URL}/sessions/${sessionId}`, {
     method: "PATCH",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: buildAuthHeaders(token),
     body: JSON.stringify({ title }),
   });
   if (res.status === 401) throw new Error("UNAUTHORIZED");
@@ -280,69 +227,49 @@ export async function renameSessionOnServer(baseUrl: string, token: string, sess
   return res.json();
 }
 
-export async function deleteSessionFromServer(baseUrl: string, token: string, sessionId: number): Promise<boolean> {
-  const res = await loggedFetch(`${baseUrl}/sessions/${sessionId}`, {
+export async function deleteSessionFromServer(_baseUrl: string, token: string, sessionId: number): Promise<boolean> {
+  const res = await fetch(`${MAIN_API_URL}/sessions/${sessionId}`, {
     method: "DELETE",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-    },
+    headers: buildAuthHeaders(token),
   });
   if (res.status === 401) throw new Error("UNAUTHORIZED");
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || "Failed to delete session from server");
   }
-  return res.ok;
+  return true;
 }
 
-export async function fetchSessionMessagesFromServer(baseUrl: string, token: string, sessionId: number): Promise<Message[]> {
+export async function fetchSessionMessagesFromServer(_baseUrl: string, _token: string, sessionId: number): Promise<Message[]> {
   try {
-    const res = await loggedFetch(`${baseUrl}/sessions/${sessionId}/messages`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "accept": "application/json",
-      },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        return data.map((item: any, idx: number) => ({
-          id: item.id ? String(item.id) : `msg-${Date.now()}-${idx}`,
-          role: item.role === "user" ? "user" : "assistant",
-          content: item.content || item.message || "",
-          timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }));
-      }
-    }
-  } catch (e) {
-    console.warn("Messages subroute failed:", e);
+    const raw = localStorage.getItem(`igris_msgs_${sessionId}`) || "[]";
+    return JSON.parse(raw) as Message[];
+  } catch {
+    return [];
   }
+}
 
-  try {
-    const res = await loggedFetch(`${baseUrl}/sessions/${sessionId}`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "accept": "application/json",
-      },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.messages)) {
-        return data.messages.map((item: any, idx: number) => ({
-          id: item.id ? String(item.id) : `msg-${Date.now()}-${idx}`,
-          role: item.role === "user" ? "user" : "assistant",
-          content: item.content || item.message || "",
-          timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }));
-      }
-    }
-  } catch (e) {
-    console.warn("Session detailed query failed:", e);
+export async function analyzeFile(file: File): Promise<any> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${FILE_API_BASE}/analyze`, { method: "POST", body: form });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`External analyze failed: ${res.status} ${txt}`);
   }
+  return res.json();
+}
 
-  throw new Error("NOT_SUPPORTED");
+export async function analyzeFiles(files: File[]): Promise<any[]> {
+  if (files.length === 0) return [];
+  const form = new FormData();
+  files.forEach((f) => form.append("file", f));
+  const res = await fetch(`${FILE_API_BASE}/analyze/batch`, { method: "POST", body: form });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`External analyze batch failed: ${res.status} ${txt}`);
+  }
+  return res.json();
 }
 
 export async function postChatMessage(
@@ -350,132 +277,62 @@ export async function postChatMessage(
   token: string,
   sessionId: number,
   message: string,
-  fileType?: string,
-  fileName?: string,
-  fileData?: string,
-  fileAnalysis?: any,
   files?: UploadedFile[]
 ): Promise<{ response: string; session_id?: number }> {
-  let bodyPayload: any;
+  const msgsRaw = localStorage.getItem(`igris_msgs_${sessionId}`) || "[]";
+  const msgs: Message[] = JSON.parse(msgsRaw);
 
-  if (files && files.length > 0) {
-    const formattedFiles = files.map(f => {
-      let mappedType = f.fileType;
-      // Map file types to the requested schema values: image|code|pdf|doc|text
-      if (f.fileType === "docx") mappedType = "doc" as any;
-      else if (f.fileType === "txt") mappedType = "text" as any;
+  const formattedFiles = files?.map((f) => ({
+    name: f.fileName,
+    type: f.fileType === "docx" ? "doc" : f.fileType === "txt" ? "text" : f.fileType,
+    file_type: f.fileType,
+    summary: f.analysis?.summary || f.analysis?.description || "",
+    analysis: f.analysis || null,
+  })) || [];
 
-      const analysisObj = {
-        summary: f.analysis?.summary || f.analysis?.description || "",
-        ocr: f.analysis?.ocrText || "",
-        objects: Array.isArray(f.analysis?.detectedObjects) ? f.analysis.detectedObjects : [],
-        issues: [
-          ...(Array.isArray(f.analysis?.bugs) ? f.analysis.bugs : []),
-          ...(Array.isArray(f.analysis?.securityIssues) ? f.analysis.securityIssues : [])
-        ],
-        insights: [
-          ...(Array.isArray(f.analysis?.insights) ? f.analysis.insights : []),
-          ...(Array.isArray(f.analysis?.keyPoints) ? f.analysis.keyPoints : []),
-          ...(Array.isArray(f.analysis?.suggestedImprovements) ? f.analysis.suggestedImprovements : [])
-        ]
-      };
+  const payload: any = {
+    message,
+    session_id: sessionId,
+  };
 
-      return {
-        name: f.fileName,
-        type: mappedType,
-        raw_content: f.rawContent,
-        analysis: analysisObj
-      };
-    });
-
-    const primaryFile = files[0];
-    let primaryMappedType = primaryFile.fileType;
-    if (primaryFile.fileType === "docx") primaryMappedType = "doc" as any;
-    else if (primaryFile.fileType === "txt") primaryMappedType = "text" as any;
-
-    const primaryAnalysisObj = {
-      summary: primaryFile.analysis?.summary || primaryFile.analysis?.description || "",
-      ocr: primaryFile.analysis?.ocrText || "",
-      objects: Array.isArray(primaryFile.analysis?.detectedObjects) ? primaryFile.analysis.detectedObjects : [],
-      issues: [
-        ...(Array.isArray(primaryFile.analysis?.bugs) ? primaryFile.analysis.bugs : []),
-        ...(Array.isArray(primaryFile.analysis?.securityIssues) ? primaryFile.analysis.securityIssues : [])
-      ],
-      insights: [
-        ...(Array.isArray(primaryFile.analysis?.insights) ? primaryFile.analysis.insights : []),
-        ...(Array.isArray(primaryFile.analysis?.keyPoints) ? primaryFile.analysis.keyPoints : []),
-        ...(Array.isArray(primaryFile.analysis?.suggestedImprovements) ? primaryFile.analysis.suggestedImprovements : [])
-      ]
-    };
-
-    bodyPayload = {
-      message: message || "User uploaded files",
-      session_id: sessionId,
-      input_type: "file",
-      file: {
-        name: primaryFile.fileName,
-        type: primaryMappedType,
-        raw_content: primaryFile.rawContent
-      },
-      analysis: primaryAnalysisObj,
-      files: formattedFiles
-    };
-  } else if (fileType) {
-    // Map file types to the requested schema values: image|code|pdf|doc|text
-    let mappedType = fileType;
-    if (fileType === "docx") mappedType = "doc";
-    else if (fileType === "txt") mappedType = "text";
-
-    // Reconstruct analysis object with the exact keys: summary, ocr, objects, issues, insights
-    const analysisObj = {
-      summary: fileAnalysis?.summary || fileAnalysis?.description || "",
-      ocr: fileAnalysis?.ocrText || "",
-      objects: Array.isArray(fileAnalysis?.detectedObjects) ? fileAnalysis.detectedObjects : [],
-      issues: [
-        ...(Array.isArray(fileAnalysis?.bugs) ? fileAnalysis.bugs : []),
-        ...(Array.isArray(fileAnalysis?.securityIssues) ? fileAnalysis.securityIssues : [])
-      ],
-      insights: [
-        ...(Array.isArray(fileAnalysis?.insights) ? fileAnalysis.insights : []),
-        ...(Array.isArray(fileAnalysis?.keyPoints) ? fileAnalysis.keyPoints : []),
-        ...(Array.isArray(fileAnalysis?.suggestedImprovements) ? fileAnalysis.suggestedImprovements : [])
-      ]
-    };
-
-    bodyPayload = {
-      message: message || "User uploaded a file",
-      session_id: sessionId,
-      input_type: "file",
-      file: {
-        name: fileName || "file",
-        type: mappedType,
-        raw_content: fileData || ""
-      },
-      analysis: analysisObj
-    };
-  } else {
-    bodyPayload = {
-      message,
-      session_id: sessionId,
-      input_type: "text",
-      file: null,
-      analysis: null,
-      files: []
-    };
+  if (formattedFiles.length > 0) {
+    payload.files = formattedFiles;
   }
 
-  const res = await loggedFetch(`${baseUrl}/chat`, {
+  const res = await fetch(`${MAIN_API_URL}/chat`, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(bodyPayload),
+    headers: buildAuthHeaders(token),
+    body: JSON.stringify(payload),
   });
+
   if (res.status === 401) throw new Error("UNAUTHORIZED");
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || "Chat service returned an error");
   }
-  return res.json();
+
+  const responseData = await res.json();
+  const assistantText =
+    typeof responseData === "string"
+      ? responseData
+      : responseData.response || responseData.message || responseData.result || responseData.data || JSON.stringify(responseData);
+
+  const userMsg: Message = {
+    id: `user-${Date.now()}`,
+    role: "user",
+    content: message,
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+
+  const botMsg: Message = {
+    id: `bot-${Date.now() + 1}`,
+    role: "assistant",
+    content: assistantText,
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+
+  const updated = [...msgs, userMsg, botMsg];
+  localStorage.setItem(`igris_msgs_${sessionId}`, JSON.stringify(updated));
+
+  return { response: assistantText, session_id: sessionId };
 }

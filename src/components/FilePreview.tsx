@@ -5,11 +5,11 @@ interface FilePreviewProps {
   key?: any;
   fileName: string;
   fileType: "image" | "code" | "pdf" | "docx" | "txt";
-  fileData?: string;
+  previewUrl?: string;
   pageCount?: number;
 }
 
-export default function FilePreview({ fileName, fileType, fileData, pageCount }: FilePreviewProps) {
+export default function FilePreview({ fileName, fileType, previewUrl, pageCount }: FilePreviewProps) {
   const isImg = fileType === "image";
   const isCode = fileType === "code";
   const isPdf = fileType === "pdf";
@@ -22,9 +22,9 @@ export default function FilePreview({ fileName, fileType, fileData, pageCount }:
     return (
       <div id={`image-preview-${fileName}`} className="flex flex-col space-y-1.5 mt-2 select-none">
         <div className="relative rounded-xl overflow-hidden bg-zinc-950/85 border border-white/10 max-w-[220px] max-h-[150px] flex items-center justify-center p-1 shadow-lg transform transition duration-200 hover:scale-[1.01]">
-          {fileData ? (
+          {previewUrl ? (
             <img
-              src={fileData}
+              src={previewUrl}
               alt={fileName}
               className="max-h-[140px] max-w-[210px] object-cover rounded-lg"
               referrerPolicy="no-referrer"

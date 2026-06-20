@@ -193,11 +193,8 @@ export default function App() {
       const isOnline = await checkServerStatus(config.apiBaseUrl);
       setServerOnline(isOnline);
       
-      if (isOnline) {
-        showToast("success", "IGRIS database connected! Ready for live commands.");
-      } else {
-        showToast("error", "Database node currently unresponsive or spinning up.");
-      }
+      // Update server online flag silently (no user toast)
+      // showToast calls removed to avoid noisy backend connectivity notifications
 
       if (!user || !user.token) {
         setSessions([]);
@@ -615,11 +612,13 @@ export default function App() {
       content: text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       ...(attaches.length > 0 ? {
-        files: attaches,
-        fileType: attaches[0].fileType,
-        fileName: attaches[0].fileName,
-        fileData: attaches[0].rawContent,
-        fileAnalysis: attaches[0].analysis
+        files: attaches.map((f) => ({
+          fileName: f.fileName,
+          fileType: f.fileType,
+          analysis: f.analysis,
+          pageCount: f.pageCount,
+          previewUrl: f.previewUrl || undefined,
+        })),
       } : {})
     };
 
@@ -766,14 +765,10 @@ export default function App() {
     try {
       // Fetch from real IGRIS API!
       const result = await postChatMessage(
-        config.apiBaseUrl, 
-        user.token, 
-        activeSessionId, 
+        config.apiBaseUrl,
+        user.token,
+        activeSessionId,
         messageToSend,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
         attaches
       );
       let finalBotText = result.response;
@@ -816,11 +811,11 @@ export default function App() {
     if (ok) {
       setConnectionStatus("connected");
       setServerOnline(true);
-      showToast("success", "Successfully established backend server connectivity!");
+      // Intentionally not notifying user on connectivity to reduce noise
     } else {
       setConnectionStatus("failed");
       setServerOnline(false);
-      showToast("error", "Connectivity failed. Check if API Base URL is online.");
+      // Intentionally silent on connectivity failure; other toasts remain
     }
     setIsTestingConnection(false);
   };
